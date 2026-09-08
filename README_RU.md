@@ -25,9 +25,7 @@
 - [Быстрый старт](#-быстрый-старт)
   - [1. Установка](#1-установка)
   - [2. Запуск пайплайна](#2-запуск-пайплайна)
-- [API и конфигурация](#-api-и-конфигурация)
 - [Структура проекта](#-структура-проекта)
-- [Контрибьютинг](#-контрибьютинг)
 - [Цитирование](#-цитирование)
 
 ---
@@ -77,6 +75,8 @@
 
 Фреймворк построен на `LangGraph` и состоит из трех фаз, организованных в виде направленного графа рабочих процессов:
 
+![Pipeline diagram](pipeline_graph.png)
+
 ### Фаза 1: Калибровка PINN и Initial Baseline
 На исторических эпидемиологических данных обучается Physics-Informed Neural Network, которая решает обратную задачу: восстанавливает траектории компартментов (S, I, R, D) и идентифицирует базовые параметры `β, γ, μ`.
 
@@ -100,8 +100,8 @@
 
 ```bash
 # Клонируем репозиторий
-git clone https://github.com/your-org/your-repo-name.git
-cd your-repo-name
+git clone https://github.com/vnlenenko/Epi_PINN_LLM_param.git
+cd Epi_PINN_LLM_param
 
 # Рекомендуется создать виртуальное окружение
 python -m venv venv
@@ -110,3 +110,154 @@ source venv/bin/activate  # Linux/macOS
 
 # Устанавливаем зависимости
 pip install -r requirements.txt
+```
+
+Создайте файл `.env` с настройками LLM-провайдера (при необходимости).
+
+### 2. Запуск пайплайна
+
+```bash
+python main_test.py
+```
+
+Провайдер задаётся переменной `LLM_PROVIDER` в `.env` (по умолчанию `huggingface`; также `openai`, `vllm`, `lmstudio`).
+
+---
+
+## 📁 Структура проекта
+
+```
+epi_pinn_llm_param/
+├── main_test.py                 # Точка входа: LangGraph-пайплайн (фазы 2–3) + сравнение PINN
+├── config.py                    # Настройки LLM-провайдера (из .env)
+├── .env                         # Секреты и выбор провайдера (не коммитится)
+├── requirements.txt
+├── expert_comment_peak_examples.txt
+├── pipeline_graph.png           # Экспорт схемы LangGraph
+│
+├── agents/                      # Компоненты, которые вызывает граф
+│   ├── BaseLLMClient.py         # Абстрактный клиент + LLMResponse
+│   ├── LLMClients.py            # OpenAI, HuggingFace, vLLM, LM Studio
+│   ├── LLMFactory.py            # Собирает клиент из config.LLM_CONFIG
+│   ├── IntentParserAgent.py     # Комментарий эксперта → ExpertIntent (направление пика)
+│   ├── EpiParamGeneratorAgent.py# Новые β, γ, μ + обоснование (EpiParameters)
+│   ├── DeterministicCriticAgent.py  # Критик по умолчанию: accept/reject относительно цели
+│   ├── DeterministicCriticAgent2.py # Экспериментальные варианты критика (не в графе по умолчанию)
+│   ├── DeterministicCriticAgent3.py
+│   ├── ParameterCriticAgent.py  # Опциональный чисто LLM-критик (не в графе по умолчанию)
+│   ├── SurrogateModel.py        # Классическая SIRD (scipy ODE) + SurrogateAgent
+│   ├── PINN_const.py            # Сеть EINN_PINN и замороженные EpiParams
+│   └── PINNAgent.py             # Обучение PINN из состояния пайплайна
+│
+├── formats/
+│   └── data_formats.py          # Pydantic-схемы ввода/вывода и PipelineState
+│
+├── utils/
+│   ├── PromptLogger.py          # Сохраняет промпты generator/critic в logs/prompts/
+│   └── RetryParser.py           # Повторный разбор JSON ответа LLM
+│
+├── Phase 1 (model calibration)/ # Офлайн-калибровка → базовые β, γ, μ
+│   ├── PINN_test.ipynb
+│   ├── SIRD_calibration.ipynb
+│   ├── synthetic_datasets/
+│   └── real_datasets/
+│
+└── PINN_comparison_results/     # Графики/JSON: baseline vs optimized PINN
+```
+
+Папки, которые появляются при запуске: `PINN_agent_results/` (графики PINN по итерациям), `logs/prompts/` (трассы LLM).
+
+### Слои
+
+| Слой | Роль |
+|---|---|
+| **Ноутбуки Phase 1** | Оценка базовых `β, γ, μ` по историческим или синтетическим SIRD-данным (классическая ODE или PINN). |
+| **`main_test.py`** | Онлайн-пайплайн: узлы LangGraph, `OptimizationPipeline`, сравнение PINN и SIRD, отчёты. |
+| **`agents/`** | LLM-агенты, SIRD-суррогат, обучение PINN. |
+| **`formats/`** | Общие контракты: все узлы читают и пишут одно и то же состояние. |
+| **`utils/`** | Логирование промптов и устойчивый разбор JSON. |
+| **`config.py`** | Переносит `.env` в `LLM_CONFIG` (`huggingface` / `openai` / `vllm` / `lmstudio`). |
+
+### Узлы LangGraph (`main_test.py`)
+
+```
+sensitivity → intent → generate → surrogate → critic → history
+                                              ↓ accept
+                                    pinn_verification → END
+                                              ↓ reject
+                                         generate (следующая итерация)
+```
+
+| Узел | Тип | Что делает |
+|---|---|---|
+| `sensitivity` | детерминированный | Варьирует `β, γ, μ` на SIRD и строит карту чувствительности (день/высота пика). |
+| `intent` | LLM | Разбирает комментарий эксперта в `ExpertIntent` (выше/ниже, раньше/позже). |
+| `generate` | LLM | Предлагает новые `β, γ, μ` по цели, чувствительности и отклонённым попыткам. |
+| `surrogate` | детерминированный | Интегрирует SIRD; фиксирует день пика, высоту, смерти. |
+| `critic` | смешанный | Принимает эпизод, если пик суррогата сдвинулся в нужную сторону. |
+| `history` | детерминированный | Добавляет `Episode`; либо возвращается к `generate`, либо останавливается. |
+| `pinn_verification` | PINN | Переобучает `EINN_PINN` с **замороженными** принятыми параметрами и сравнивает с baseline. |
+
+Примеры комментариев (только пик, комбинации, интервенции) — в `expert_comment_peak_examples.txt`.
+
+### Общие схемы (`formats/data_formats.py`)
+
+- **`EpiParameters`** — выход генератора: `beta`, `gamma`, `mu`, `reasoning`, `confidence`.
+- **`ExpertIntent`** — интересует ли эксперта **положение** и/или **высота** пика и в какую сторону.
+- **`Episode`** — одна итерация: параметры, метрики пика, комментарий, флаг `accepted`.
+- **`PipelineState`** — состояние LangGraph: конфиг задачи, история, сгенерированные параметры, результаты суррогата/PINN, счётчики итераций.
+
+### Данные
+
+Ноутбуки Phase 1 дают базовые `β, γ, μ`, с которых стартует `main_test.py`. Датасет и комментарий переключаются внутри `main()`.
+
+**Синтетический CSV** (`synthetic_datasets/`): `day, S, I, R, D, beta, gamma, mu, R0`
+
+| Файл | Сценарий |
+|---|---|
+| `01_baseline_constant` | Постоянные параметры |
+| `02_lockdown_beta_jump` | Скачок β (локдаун); копии с шумом 3/5/10% |
+| `03_seasonal_beta_sin` | Сезонный β |
+| `04_decaying_beta_trend` | Затухающий β |
+| `05_complex_beta_gamma_dynamics` | Совместная динамика β и γ; копии с шумом |
+
+**Реальный CSV** (`real_datasets/`): обычно `t, I, D, S, R`
+
+- `covid-19_Kouprianov.csv` — COVID-19, Санкт-Петербург
+- `PINN-COVID-Italy.csv` — COVID-19, Италия
+
+### Артефакты запуска
+
+| Путь | Содержимое |
+|---|---|
+| `PINN_comparison_results/` | Baseline vs optimized PINN (`comparison_*.png/json`, `peak_analysis_*.png`, `pdf_plots/`) |
+| `PINN_agent_results/` | Графики обучения PINN по запускам |
+| `logs/prompts/generator/` | Промпты генератора и сырые ответы LLM |
+| `logs/prompts/critic/` | Промпты и ответы критика |
+| `pipeline_graph.png` | Mermaid-экспорт скомпилированного графа |
+
+### Конфигурация (`.env`)
+
+| Переменная | Назначение |
+|---|---|
+| `LLM_PROVIDER` | `huggingface` (по умолчанию), `openai`, `vllm` или `lmstudio` |
+| `MODEL_NAME_HF`, `MODEL_TEMPERATURE_HF`, `MAX_TOKENS` | Модель HuggingFace |
+| `HF_USE_API`, `HF_DEVICE`, `HUGGINGFACE_HUB_TOKEN` | API или локально, устройство, токен |
+| `OPENAI_MODEL`, `OPENAI_API_KEY` | OpenAI |
+| `VLLM_MODEL`, `VLLM_TENSOR_PARALLEL` | Локальный vLLM |
+| `LMSTUDIO_BASE_URL`, `LMSTUDIO_MODEL` | LM Studio (`http://127.0.0.1:1234/v1`) |
+
+---
+
+## 📚 Цитирование
+
+Если вы используете этот код или фреймворк, пожалуйста, процитируйте:
+
+```bibtex
+@inproceedings{gindullina2026interpretable,
+  title={Interpretable Expert-Informed Epidemic Forecasting via Hybrid Mechanistic and LLM-Based Modeling},
+  author={Gindullina, Dinara and Leonenko, Vasiliy},
+  booktitle={Proceedings of ...},
+  year={2026}
+}
+```

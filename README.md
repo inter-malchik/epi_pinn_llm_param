@@ -1,74 +1,258 @@
-# Epi_PINN_LLM_Param
+# Expert-Guided Epidemic Forecasting with PINNs and LLMs
 
-**Interpretable Expert-Informed Epidemic Forecasting via Hybrid Mechanistic and LLM-Based Modeling**
+<div align="center">
 
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Status: Experimental](https://img.shields.io/badge/Status-Experimental-yellow.svg)]()
+[![Python 3.9+](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
+[![Framework: PyTorch](https://img.shields.io/badge/PyTorch-%23EE4C2C.svg?logo=PyTorch&logoColor=white)]()
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)]()
 
-Short description:  
-A human-in-the-loop framework that integrates expert knowledge into epidemic forecasting by adjusting epidemiological parameters (β, γ, μ) using a multi-agent LLM system. Unlike black-box or loss-modifying approaches, this method provides interpretable, verifiable forecast adjustments.
+</div>
+
+**Translating qualitative expert knowledge into the mathematical parameters of epidemiological models.**
+
+A framework that combines Physics-Informed Neural Networks (PINNs), Large Language Models (LLMs), and classical SIRD models for controllable, interpretable epidemic forecasting.
+
+---
 
 ## Table of Contents
-- [Background](#background)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Pipeline Overview](#pipeline-overview)
+
+- [Background and Motivation](#background-and-motivation)
+- [Key Problem](#key-problem)
+- [Features](#features)
+- [Demo and Results](#demo-and-results)
+- [How It Works](#how-it-works)
+- [Quick Start](#quick-start)
+  - [1. Installation](#1-installation)
+  - [2. Running the Pipeline](#2-running-the-pipeline)
 - [Project Structure](#project-structure)
-- [Results](#results)
 - [Citation](#citation)
-- [License](#license)
 
-## Background
+---
 
-Epidemic forecasts often rely on either:
-- **Classical SIRD models** – interpretable but inaccurate, or
-- **Black-box models** – accurate but uninterpretable.
+## Background and Motivation
 
-This work combines **Physics-Informed Neural Networks (PINNs)** with **LLM agents** to:
-1. Calibrate initial parameters from data.
-2. Adjust parameters based on natural-language expert feedback.
-3. Generate final forecasts with uncertainty (Monte Carlo Dropout).
+Epidemic forecasting is a high-stakes domain: the cost of error is measured in human lives. Although “black boxes” (deep neural networks) can be accurate, they lack the transparency required for trust. Classical SIR/SEIRD models, by contrast, are transparent and interpretable, but often not accurate enough.
 
-The LLM agents translate requests like *"the peak should be higher"* into meaningful changes in β, γ, μ – consistent with SIRD logic.
+Hybrid approaches such as **Physics-Informed Neural Networks (PINNs)** promise the best of both worlds: neural-network accuracy together with consistency with physical/biological laws. They still miss a critical component — **expert knowledge**.
 
-## Installation
+Epidemiologists constantly revise forecasts using qualitative, informal factors: cultural context, delayed lockdowns, or news about viral variability.
+
+**This project is an attempt to bridge natural-language expert input and the mathematics of the models.**
+
+---
+
+## Key Problem
+
+We identified and empirically confirmed a fundamental issue in hybrid neuro-mechanistic systems (PINNs):
+
+> **Parametric interpretability does not guarantee controllability of model behavior.**
+
+Experiments show that when epidemiological parameters are fixed after being changed according to expert logic, a PINN can produce forecast dynamics **opposite** to what is expected. For example, increasing the transmission rate (`β`) can *lower* the predicted epidemic peak, which violates basic SIRD principles. This finding calls into question the direct use of PINNs in expert-driven systems.
+
+---
+
+## Features
+
+- **End-to-end pipeline:** Automatic chain from a textual expert comment to a validated forecast.
+- **Multi-agent LLM system:** Intelligent translation of qualitative requests (“the peak should be lower and later”) into numerical parameter values (`β`, `γ`, `μ`).
+- **PINN calibration and validation:** Physics-Informed Neural Networks for parameter estimation and final forecast checks.
+- **Built-in sensitivity module:** Deterministic analysis of how each parameter affects key epidemic metrics, so the search for values is fast and justified.
+- **Reproducible testing:** Experiments on synthetic data and real COVID-19 data (St. Petersburg).
+
+---
+
+## Demo and Results
+
+The key observation is a systematic mismatch between the surrogate SIRD forecast and the final PINN forecast under the same parameters.
+
+**LLM-controlled experiment (“The peak should be lower”):**
+
+Parameter `β` was decreased, which for the classical model means a lower and later peak. The PINN with the same parameters, however, predicted an **increase** in the peak.
+
+---
+
+## How It Works
+
+The framework is built on `LangGraph` and consists of three phases, organized as a directed workflow graph:
+
+![Pipeline diagram](pipeline_graph.png)
+
+### Phase 1: PINN Calibration and Initial Baseline
+
+A Physics-Informed Neural Network is trained on historical epidemiological data. It solves the inverse problem: recovering compartment trajectories (S, I, R, D) and identifying baseline parameters `β, γ, μ`.
+
+### Phase 2: LLM-Guided Parameter Optimization (LangGraph Pipeline)
+
+This is the core of the system, split into several nodes:
+
+1. **`Intent Parser` (LLM):** Parses the expert request (“I want a higher peak”) and formalizes it as a target action (`peak_height: increase`).
+2. **`Sensitivity Node` (Deterministic):** Runs a fast sensitivity analysis on the surrogate SIRD model to see how changes in `β, γ, μ` affect the peak.
+3. **`LLM Parameter Generator` (LLM):** Given the goal, sensitivity map, and attempt history, generates a new adjusted parameter set.
+4. **`Surrogate Evaluator + Deterministic Critic`:** Quickly checks the generated parameters on the classical SIRD model. If the expected effect is achieved, the parameters proceed; otherwise the loop repeats.
+
+### Phase 3: Final Verification with Frozen Parameters
+
+Optimized parameters are frozen and fed back into the PINN to obtain the final forecast and compare it with the baseline. This is the stage where the key mismatch appears.
+
+---
+
+## Quick Start
+
+### 1. Installation
+
+Clone the repository and install dependencies.
 
 ```bash
+# Clone the repository
 git clone https://github.com/vnlenenko/Epi_PINN_LLM_param.git
 cd Epi_PINN_LLM_param
+
+# Recommended: create a virtual environment
+python -m venv venv
+source venv/bin/activate  # Linux/macOS
+# venv\Scripts\activate   # Windows
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-Create a `.env` file for your LLM provider settings (if needed).
+Create a `.env` file with LLM provider settings (if needed).
 
-## Usage
+### 2. Running the Pipeline
 
-### Quick test
 ```bash
 python main_test.py
 ```
 
+The provider is set by `LLM_PROVIDER` in `.env` (default `huggingface`; also `openai`, `vllm`, `lmstudio`).
 
-## Pipeline Overview
+---
 
-![Pipeline diagram](pipeline_graph.png)
+## Project Structure
 
-**Phase 1** – Model calibration (SIRD or PINN) → initial β, γ, μ.  
-**Phase 2** – LLM agents parse expert comment → sensitivity analysis → adjusted parameters → synthetic SIRD data.  
-**Phase 3** – PINN retrained with fixed adjusted parameters → final forecast + confidence intervals (Monte Carlo Dropout).
+```
+epi_pinn_llm_param/
+├── main_test.py                 # Entry point: LangGraph pipeline (Phases 2–3) + PINN comparison
+├── config.py                    # LLM provider settings (from .env)
+├── .env                         # Secrets and provider choice (not committed)
+├── requirements.txt
+├── expert_comment_peak_examples.txt
+├── pipeline_graph.png           # Exported LangGraph diagram
+│
+├── agents/                      # Runtime components used by the graph
+│   ├── BaseLLMClient.py         # Abstract client + LLMResponse
+│   ├── LLMClients.py            # OpenAI, HuggingFace, vLLM, LM Studio
+│   ├── LLMFactory.py            # Builds a client from config.LLM_CONFIG
+│   ├── IntentParserAgent.py     # Expert comment → ExpertIntent (peak direction)
+│   ├── EpiParamGeneratorAgent.py# New β, γ, μ + reasoning (EpiParameters)
+│   ├── DeterministicCriticAgent.py  # Default critic: accept/reject vs intent
+│   ├── DeterministicCriticAgent2.py # Experimental critic variants (not in default graph)
+│   ├── DeterministicCriticAgent3.py
+│   ├── ParameterCriticAgent.py  # Optional LLM-only critic (not in default graph)
+│   ├── SurrogateModel.py        # Classical SIRD (scipy ODE) + SurrogateAgent
+│   ├── PINN_const.py            # EINN_PINN network and frozen EpiParams
+│   └── PINNAgent.py             # Train PINN from pipeline state
+│
+├── formats/
+│   └── data_formats.py          # Pydantic I/O schemas and PipelineState
+│
+├── utils/
+│   ├── PromptLogger.py          # Saves generator/critic prompts under logs/prompts/
+│   └── RetryParser.py           # Retries Pydantic parsing of LLM JSON
+│
+├── Phase 1 (model calibration)/ # Offline calibration → baseline β, γ, μ
+│   ├── PINN_test.ipynb
+│   ├── SIRD_calibration.ipynb
+│   ├── synthetic_datasets/
+│   └── real_datasets/
+│
+└── PINN_comparison_results/     # Baseline vs optimized PINN plots/JSON
+```
 
-## Results
+Runtime folders created on a run: `PINN_agent_results/` (PINN plots per iteration), `logs/prompts/` (LLM traces).
 
-- **Parameter adjustment** – LLM agents correctly change β, γ, μ according to expert intent (e.g., higher peak → β↑, R₀ from 1.119 → 1.194).  
-- **Forecast shift** – Final PINN forecast shows the requested change (higher/lower peak) with uncertainty bands.  
-- **Model-agnostic** – Works with both SIRD and PINN in Phase 1.
+### Layers
 
-Example (real COVID-19 data, St. Petersburg):
+| Layer | Role |
+|---|---|
+| **Phase 1 notebooks** | Fit baseline `β, γ, μ` on historical or synthetic SIRD data (classical ODE or PINN). |
+| **`main_test.py`** | Online pipeline: LangGraph nodes, `OptimizationPipeline`, PINN vs SIRD comparison, reports. |
+| **`agents/`** | LLM workers, SIRD surrogate, PINN training. |
+| **`formats/`** | Shared contracts so every node reads/writes the same state. |
+| **`utils/`** | Prompt logging and robust JSON parsing. |
+| **`config.py`** | Maps `.env` to `LLM_CONFIG` (`huggingface` / `openai` / `vllm` / `lmstudio`). |
 
-| Request               | β      | γ      | μ      | R₀   |
-|-----------------------|--------|--------|--------|------|
-| Baseline (Phase 1)    | 0.1219 | 0.0990 | 0.0099 | 1.119|
-| "The peak higher"     | 0.1295 | 0.0986 | 0.0099 | 1.194|
-| "The peak lower"      | 0.1185 | 0.0997 | 0.0098 | 1.082|
+### LangGraph nodes (`main_test.py`)
+
+```
+sensitivity → intent → generate → surrogate → critic → history
+                                              ↓ accept
+                                    pinn_verification → END
+                                              ↓ reject
+                                         generate (next iteration)
+```
+
+| Node | Kind | What it does |
+|---|---|---|
+| `sensitivity` | deterministic | Perturbs `β, γ, μ` on SIRD and builds a sensitivity map (peak day / height). |
+| `intent` | LLM | Parses the expert comment into `ExpertIntent` (higher/lower, earlier/later). |
+| `generate` | LLM | Proposes new `β, γ, μ` from intent, sensitivity, and rejected attempts. |
+| `surrogate` | deterministic | Integrates SIRD; records peak position, peak height, deaths. |
+| `critic` | mixed | Accepts the episode if the surrogate peak moved in the requested direction. |
+| `history` | deterministic | Appends an `Episode`; loops to `generate` or stops. |
+| `pinn_verification` | PINN | Retrains `EINN_PINN` with **frozen** accepted parameters and compares to baseline. |
+
+Example comments (peak only, combinations, interventions) are in `expert_comment_peak_examples.txt`.
+
+### Shared schemas (`formats/data_formats.py`)
+
+- **`EpiParameters`** — LLM generator output: `beta`, `gamma`, `mu`, `reasoning`, `confidence`.
+- **`ExpertIntent`** — whether the expert cares about peak **position** and/or **height**, and the direction.
+- **`Episode`** — one iteration: parameters, peak metrics, expert comment, `accepted` flag.
+- **`PipelineState`** — LangGraph state: task config, history, generated params, surrogate/PINN results, iteration counters.
+
+### Data
+
+Phase 1 notebooks produce the baseline `β, γ, μ` that `main_test.py` starts from. Switch dataset and comment inside `main()`.
+
+**Synthetic CSV** (`synthetic_datasets/`): `day, S, I, R, D, beta, gamma, mu, R0`
+
+| File | Scenario |
+|---|---|
+| `01_baseline_constant` | Constant parameters |
+| `02_lockdown_beta_jump` | β drop (lockdown); noisy copies at 3/5/10% |
+| `03_seasonal_beta_sin` | Seasonal β |
+| `04_decaying_beta_trend` | Decaying β |
+| `05_complex_beta_gamma_dynamics` | Joint β and γ dynamics; noisy copies |
+
+**Real CSV** (`real_datasets/`): typically `t, I, D, S, R`
+
+- `covid-19_Kouprianov.csv` — COVID-19, St. Petersburg
+- `PINN-COVID-Italy.csv` — COVID-19, Italy
+
+### Runtime artifacts
+
+| Path | Contents |
+|---|---|
+| `PINN_comparison_results/` | Baseline vs optimized PINN (`comparison_*.png/json`, `peak_analysis_*.png`, `pdf_plots/`) |
+| `PINN_agent_results/` | Per-run PINN training plots |
+| `logs/prompts/generator/` | Generator prompts and raw LLM replies |
+| `logs/prompts/critic/` | Critic prompts and replies |
+| `pipeline_graph.png` | Mermaid export of the compiled graph |
+
+### Configuration (`.env`)
+
+| Variable | Purpose |
+|---|---|
+| `LLM_PROVIDER` | `huggingface` (default), `openai`, `vllm`, or `lmstudio` |
+| `MODEL_NAME_HF`, `MODEL_TEMPERATURE_HF`, `MAX_TOKENS` | HuggingFace model |
+| `HF_USE_API`, `HF_DEVICE`, `HUGGINGFACE_HUB_TOKEN` | API vs local, device, token |
+| `OPENAI_MODEL`, `OPENAI_API_KEY` | OpenAI |
+| `VLLM_MODEL`, `VLLM_TENSOR_PARALLEL` | Local vLLM |
+| `LMSTUDIO_BASE_URL`, `LMSTUDIO_MODEL` | LM Studio (`http://127.0.0.1:1234/v1`) |
+
+---
 
 ## Citation
 
