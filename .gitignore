@@ -43,3 +43,14 @@ Thumbs.db
 .cache/
 huggingface/
 wandb/
+
+# Tests / coverage
+.pytest_cache/
+htmlcov/
+coverage.xml
+.coverage
+.requirements.notorch.txt
+
+# Runtime outputs of the verification node (Phase 3)
+PINN_verification_results/
+PINN_verification_plots/

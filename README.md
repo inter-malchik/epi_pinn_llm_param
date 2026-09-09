@@ -139,6 +139,15 @@ epi_pinn_llm_param/
 ├── requirements.txt
 ├── expert_comment_peak_examples.txt
 ├── pipeline_graph.png           # Exported LangGraph diagram
+├── Makefile                     # install / test / test-fast / coverage / lint / run
+├── pytest.ini                   # test-runner configuration
+├── requirements-dev.txt         # pytest, pytest-cov, pytest-mock, pylint
+├── .github/workflows/tests.yml  # CI: pytest + coverage on every push/PR, pylint report
+│
+├── tests/                       # Characterization test suite (see Testing)
+│   ├── conftest.py              # Shared fixtures: temp cwd, seeds, network block, config reload
+│   ├── support.py               # Fake LLM clients and JSON reply builders
+│   └── test_*.py                # One file per module / layer
 │
 ├── agents/                      # Runtime components used by the graph
 │   ├── BaseLLMClient.py         # Abstract client + LLMResponse
@@ -251,6 +260,40 @@ Phase 1 notebooks produce the baseline `β, γ, μ` that `main_test.py` starts f
 | `OPENAI_MODEL`, `OPENAI_API_KEY` | OpenAI |
 | `VLLM_MODEL`, `VLLM_TENSOR_PARALLEL` | Local vLLM |
 | `LMSTUDIO_BASE_URL`, `LMSTUDIO_MODEL` | LM Studio (`http://127.0.0.1:1234/v1`) |
+
+---
+
+## Testing
+
+The repository ships a **characterization test suite**: it pins the *current* behavior of every module (quirks included) so the code can be restructured safely. A test failing after a refactor means observable behavior changed. Places where the pinned behavior looks like a bug are marked `# NOTE: current behavior — possible bug: ...` in the tests — fix the code first, then update the test deliberately.
+
+```bash
+make install     # once: creates venv, installs CPU torch + requirements + dev tools
+make test        # whole suite (~40 s on CPU)
+make test-fast   # without the slow end-to-end runs of main():  -m "not slow"
+make coverage    # HTML line-by-line coverage report in htmlcov/
+make lint        # pylint, errors and fatals only
+```
+
+Or directly: `./venv/bin/python -m pytest`.
+
+| Test file | Covers |
+|---|---|
+| `test_config.py` | `.env` → `LLM_CONFIG` mapping for every provider |
+| `test_data_formats.py` | Pydantic contracts, `Episode`, declared vs. actually used `PipelineState` keys |
+| `test_llm_clients.py` | Four LLM clients (SDKs stubbed) and `LLMFactory` |
+| `test_utils.py` | `RetryParser` back-off, `PromptLogger` files and metadata |
+| `test_surrogate.py` | SIRD integration properties and `SurrogateAgent` as a node |
+| `test_pinn.py`, `test_pinn_agent.py` | `EpiParams`, scaler, `EINN_PINN` training / MC Dropout, `PINNAgent` |
+| `test_agents_intent_generator.py`, `test_critics.py` | Intent parser, parameter generator, all critic variants |
+| `test_pipeline_nodes.py`, `test_pipeline_graph.py` | Every LangGraph node in isolation; graph topology; end-to-end `run()` with a scripted LLM |
+| `test_reports.py` | PINN comparison, summary report, comparison plot |
+| `test_project_contracts.py` | Dataset schemas, notebook import paths, `main()` constants, dependency pins |
+| `test_main_entry.py` (`slow`) | `main()` end to end with training shortened to one epoch |
+
+Design rules: only external boundaries are faked (LLM providers, network — outbound connections raise in `conftest.py`); the ODE solver, PINN, LangGraph and file system are real; every test runs in its own temporary directory so no artifact lands in the repo; seeds are fixed.
+
+CI (`.github/workflows/tests.yml`) runs the full suite with coverage on every push and pull request (Python 3.13, CPU build of torch — `requirements.txt` pins a CUDA wheel that only exists on the PyTorch index) and a non-blocking pylint report.
 
 ---
 

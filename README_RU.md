@@ -134,6 +134,15 @@ epi_pinn_llm_param/
 ├── requirements.txt
 ├── expert_comment_peak_examples.txt
 ├── pipeline_graph.png           # Экспорт схемы LangGraph
+├── Makefile                     # install / test / test-fast / coverage / lint / run
+├── pytest.ini                   # конфигурация тест-раннера
+├── requirements-dev.txt         # pytest, pytest-cov, pytest-mock, pylint
+├── .github/workflows/tests.yml  # CI: pytest + покрытие на каждый push/PR, отчёт pylint
+│
+├── tests/                       # Характеризационная тестовая сьюта (см. «Тестирование»)
+│   ├── conftest.py              # Общие фикстуры: временный cwd, seed'ы, блокировка сети, перезагрузка config
+│   ├── support.py               # Фейковые LLM-клиенты и сборщики JSON-ответов
+│   └── test_*.py                # По файлу на модуль / слой
 │
 ├── agents/                      # Компоненты, которые вызывает граф
 │   ├── BaseLLMClient.py         # Абстрактный клиент + LLMResponse
@@ -246,6 +255,40 @@ sensitivity → intent → generate → surrogate → critic → history
 | `OPENAI_MODEL`, `OPENAI_API_KEY` | OpenAI |
 | `VLLM_MODEL`, `VLLM_TENSOR_PARALLEL` | Локальный vLLM |
 | `LMSTUDIO_BASE_URL`, `LMSTUDIO_MODEL` | LM Studio (`http://127.0.0.1:1234/v1`) |
+
+---
+
+## 🧪 Тестирование
+
+В репозитории есть **характеризационная тестовая сьюта**: она фиксирует *текущее* поведение каждого модуля (включая странности), чтобы код можно было безопасно перестраивать. Если после рефакторинга тест покраснел — изменилось наблюдаемое поведение. Места, где зафиксированное поведение похоже на баг, помечены в тестах комментарием `# NOTE: current behavior — possible bug: ...` — сначала исправляйте код, затем осознанно обновляйте тест.
+
+```bash
+make install     # однократно: создаёт venv, ставит CPU-torch + requirements + dev-инструменты
+make test        # вся сьюта (~40 с на CPU)
+make test-fast   # без медленных сквозных прогонов main():  -m "not slow"
+make coverage    # HTML-отчёт покрытия построчно в htmlcov/
+make lint        # pylint, только ошибки и фатальные
+```
+
+Либо напрямую: `./venv/bin/python -m pytest`.
+
+| Файл тестов | Что покрывает |
+|---|---|
+| `test_config.py` | Отображение `.env` → `LLM_CONFIG` для каждого провайдера |
+| `test_data_formats.py` | Pydantic-контракты, `Episode`, объявленные и фактически используемые ключи `PipelineState` |
+| `test_llm_clients.py` | Четыре LLM-клиента (SDK подменены заглушками) и `LLMFactory` |
+| `test_utils.py` | Back-off `RetryParser`, файлы и метаданные `PromptLogger` |
+| `test_surrogate.py` | Свойства интегрирования SIRD и `SurrogateAgent` как узел |
+| `test_pinn.py`, `test_pinn_agent.py` | `EpiParams`, скейлер, обучение `EINN_PINN` / MC Dropout, `PINNAgent` |
+| `test_agents_intent_generator.py`, `test_critics.py` | Парсер намерения, генератор параметров, все варианты критика |
+| `test_pipeline_nodes.py`, `test_pipeline_graph.py` | Каждый узел LangGraph отдельно; топология графа; сквозной `run()` со скриптованной LLM |
+| `test_reports.py` | Сравнение PINN, сводный отчёт, сравнительный график |
+| `test_project_contracts.py` | Схемы датасетов, пути импортов ноутбуков, константы `main()`, пины зависимостей |
+| `test_main_entry.py` (`slow`) | `main()` целиком с обучением, укороченным до одной эпохи |
+
+Принципы: подменяются только внешние границы (LLM-провайдеры, сеть — исходящие соединения роняют тест в `conftest.py`); решатель ОДУ, PINN, LangGraph и файловая система настоящие; каждый тест выполняется в собственном временном каталоге, поэтому артефакты не попадают в репозиторий; seed'ы фиксированы.
+
+CI (`.github/workflows/tests.yml`) запускает всю сьюту с покрытием на каждый push и pull request (Python 3.13, CPU-сборка torch — в `requirements.txt` закреплено CUDA-колесо, которое есть только в индексе PyTorch) и информационный отчёт pylint.
 
 ---
 
